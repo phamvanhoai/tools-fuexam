@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "input",
         type=Path,
+        nargs="?",
         help="Image file or folder containing images.",
     )
     parser.add_argument(
@@ -108,7 +109,8 @@ def whiten_image(image_path: Path, output_path: Path, top_percent: float, top_px
 
 def main() -> int:
     args = parse_args()
-    input_path = args.input.resolve()
+    script_path = Path(__file__).resolve()
+    input_path = args.input.resolve() if args.input else script_path.parent
 
     if not input_path.exists():
         print(f"Input does not exist: {input_path}")
@@ -116,6 +118,7 @@ def main() -> int:
 
     output_path = args.output.resolve() if args.output else default_output_path(input_path).resolve()
     images = iter_images(input_path, args.recursive)
+    images = [image for image in images if image.resolve() != script_path]
 
     if not images:
         print("No image files found.")
