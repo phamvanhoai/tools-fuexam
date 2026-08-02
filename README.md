@@ -130,3 +130,47 @@ Nếu chưa có Pillow:
 ```powershell
 pip install pillow
 ```
+
+## 3. Ứng dụng giao diện tổng hợp
+
+Chạy file:
+
+```text
+tools/run_fuexam_gui.bat
+```
+
+Ứng dụng gồm ba chức năng:
+
+- Nhận diện số câu trong ảnh bằng AI local và đổi tên file theo số câu.
+- Tô trắng vùng phía dưới ảnh.
+- Dịch số thứ tự của một nhóm file ảnh.
+- Đổi prefix hàng loạt, giữ lại phần cuối sau dấu `_` và đuôi file.
+
+Chế độ nhận diện mặc định là **Tesseract OCR**, nhẹ và nhanh hơn AI vision local. Trên Windows có thể cài bằng:
+
+```powershell
+winget install --id UB-Mannheim.TesseractOCR --exact
+```
+
+Sau khi cài, đóng và mở lại ứng dụng. Ollama Vision AI vẫn có thể chọn làm phương án dự phòng.
+
+### AI local cho chức năng đổi tên theo số câu
+
+Ứng dụng kết nối với [Ollama](https://ollama.com/) tại máy local. Cài Ollama và tải một model vision, ví dụ:
+
+```powershell
+ollama pull qwen2.5vl:3b
+```
+
+Model mặc định trong UI là `qwen2.5vl:3b`. Có thể thay bằng model vision khác đã cài trong Ollama.
+
+Quy trình sử dụng an toàn:
+
+1. Chọn thư mục và bấm **Nạp ảnh**.
+2. Bấm **AI nhận diện tất cả**.
+3. Kiểm tra cột số câu; nhấp đúp một dòng để sửa thủ công nếu AI đọc sai.
+4. Bấm **Xem trước tên mới** rồi mới bấm **Thực hiện đổi tên**.
+
+Tùy chọn **Tự giải phóng model khỏi RAM/VRAM sau khi nhận diện** được bật mặc định. Khi hoàn tất, ứng dụng gửi `keep_alive: 0` cho Ollama để giải phóng model ngay; server Ollama vẫn chạy nền và không chiếm bộ nhớ của model.
+
+Nếu tên mới trùng với một file không thuộc nhóm đang đổi, file cũ sẽ được chuyển vào thư mục `_rename_backup` trước. Việc đổi tên được thực hiện qua tên tạm nên các trường hợp hoán đổi hoặc xoay vòng tên không ghi đè mất ảnh.
