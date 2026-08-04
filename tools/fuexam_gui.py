@@ -400,7 +400,9 @@ class FUExamApp(tk.Tk):
         self.white_output = tk.StringVar()
         self.white_recursive = tk.BooleanVar(value=False)
         self.paint_color = tk.StringVar(value="#FFFFFF")
-        self.paint_region = (0.0, 0.70, 1.0, 1.0)
+        self.paint_regions: list[tuple[float, float, float, float, str]] = [(0.0, 0.70, 1.0, 1.0, "#FFFFFF")]
+        self.paint_region: tuple[float, float, float, float] | None = None
+        self.paint_default_region = True
         self.paint_preview_image: Image.Image | None = None
         self.paint_preview_photo: ImageTk.PhotoImage | None = None
         self.paint_preview_path: Path | None = None
@@ -425,11 +427,13 @@ class FUExamApp(tk.Tk):
         color_entry.bind("<Return>", lambda _event: self.update_paint_color())
         self.eyedropper_button = ttk.Button(controls, text="Bút chấm lấy màu", command=self.toggle_eyedropper)
         self.eyedropper_button.pack(side="left", padx=8)
-        ttk.Button(controls, text="Chọn lại toàn vùng dưới 70%", command=self.reset_paint_region).pack(side="left")
+        ttk.Button(controls, text="Hoàn tác vùng cuối", command=self.undo_paint_region).pack(side="left")
+        ttk.Button(controls, text="Xóa tất cả vùng", command=self.clear_paint_regions).pack(side="left", padx=4)
+        ttk.Button(controls, text="Vùng dưới 70%", command=self.reset_paint_region).pack(side="left")
 
         ttk.Label(
             tab,
-            text="Kéo chuột trực tiếp trên ảnh để chọn vùng cần tô. Bút chấm: bật rồi nhấp vào một điểm trên ảnh.",
+            text="Mỗi lần kéo sẽ thêm một vùng với màu hiện tại. Có thể đổi màu rồi kéo tiếp để tạo vùng màu khác.",
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 5))
         action_row = ttk.Frame(tab)
         action_row.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 6))
@@ -479,19 +483,30 @@ class FUExamApp(tk.Tk):
     def draw_paint_selection(self) -> None:
         self.paint_canvas.delete("selection")
         left, top, width, height = self.paint_display_box
-        x1, y1, x2, y2 = self.paint_region
-        color = self.valid_paint_color(show_error=False) or "#FFFFFF"
-        self.paint_canvas.create_rectangle(
-            left + x1 * width,
-            top + y1 * height,
-            left + x2 * width,
-            top + y2 * height,
-            outline="#FF3030",
-            width=3,
-            fill=color,
-            stipple="gray25",
-            tags="selection",
-        )
+        regions = list(self.paint_regions)
+        if self.paint_region is not None:
+            regions.append((*self.paint_region, self.valid_paint_color(show_error=False) or "#FFFFFF"))
+        for index, (x1, y1, x2, y2, color) in enumerate(regions, 1):
+            self.paint_canvas.create_rectangle(
+                left + x1 * width,
+                top + y1 * height,
+                left + x2 * width,
+                top + y2 * height,
+                outline="#FF3030",
+                width=3,
+                fill=color,
+                stipple="gray25",
+                tags="selection",
+            )
+            self.paint_canvas.create_text(
+                left + x1 * width + 7,
+                top + y1 * height + 7,
+                text=str(index),
+                fill="#FF3030",
+                anchor="nw",
+                font=("Segoe UI", 12, "bold"),
+                tags="selection",
+            )
 
     def canvas_to_normalized(self, x: int, y: int) -> tuple[float, float]:
         left, top, width, height = self.paint_display_box
@@ -517,7 +532,12 @@ class FUExamApp(tk.Tk):
             self.eyedropper_button.configure(text="Bút chấm lấy màu")
             self.status.set(f"Đã lấy màu {self.paint_color.get()} tại điểm vừa chọn.")
             return
+        if self.paint_default_region:
+            self.paint_regions.clear()
+            self.paint_default_region = False
         self.paint_drag_start = (event.x, event.y)
+        nx, ny = self.canvas_to_normalized(event.x, event.y)
+        self.paint_region = (nx, ny, nx, ny)
 
     def paint_canvas_drag(self, event: tk.Event) -> None:
         if self.paint_drag_start is None:
@@ -533,8 +553,15 @@ class FUExamApp(tk.Tk):
             return
         self.paint_canvas_drag(event)
         self.paint_drag_start = None
+        if self.paint_region is None:
+            return
         x1, y1, x2, y2 = self.paint_region
-        self.status.set(f"Vùng chọn: X {x1:.1%}–{x2:.1%}, Y {y1:.1%}–{y2:.1%}.")
+        if x2 - x1 >= 0.001 and y2 - y1 >= 0.001:
+            color = self.valid_paint_color(show_error=False) or "#FFFFFF"
+            self.paint_regions.append((x1, y1, x2, y2, color))
+        self.paint_region = None
+        self.draw_paint_selection()
+        self.status.set(f"Đã tạo {len(self.paint_regions)} vùng tô.")
 
     def valid_paint_color(self, show_error: bool = True) -> str | None:
         value = self.paint_color.get().strip()
@@ -572,8 +599,25 @@ class FUExamApp(tk.Tk):
         self.eyedropper_button.configure(text=text)
 
     def reset_paint_region(self) -> None:
-        self.paint_region = (0.0, 0.70, 1.0, 1.0)
+        color = self.valid_paint_color(show_error=False) or "#FFFFFF"
+        self.paint_regions = [(0.0, 0.70, 1.0, 1.0, color)]
+        self.paint_region = None
+        self.paint_default_region = True
         self.draw_paint_selection()
+
+    def undo_paint_region(self) -> None:
+        if self.paint_regions:
+            self.paint_regions.pop()
+        self.paint_default_region = False
+        self.draw_paint_selection()
+        self.status.set(f"Còn {len(self.paint_regions)} vùng tô.")
+
+    def clear_paint_regions(self) -> None:
+        self.paint_regions.clear()
+        self.paint_region = None
+        self.paint_default_region = False
+        self.draw_paint_selection()
+        self.status.set("Đã xóa tất cả vùng tô. Kéo trên ảnh để tạo vùng mới.")
 
     def run_whiten(self) -> None:
         source = Path(self.white_input.get())
@@ -585,13 +629,8 @@ class FUExamApp(tk.Tk):
             messagebox.showerror("Lỗi", "Hãy chọn thư mục kết quả khác thư mục nguồn.")
             return
         files = list_images(source, self.white_recursive.get())
-        color = self.valid_paint_color()
-        if color is None:
-            return
-        rgb = ImageColor.getrgb(color)
-        x1, y1, x2, y2 = self.paint_region
-        if x2 - x1 < 0.001 or y2 - y1 < 0.001:
-            messagebox.showerror("Lỗi", "Vùng chọn quá nhỏ. Hãy kéo chọn lại trên ảnh preview.")
+        if not self.paint_regions:
+            messagebox.showerror("Lỗi", "Chưa có vùng tô. Hãy kéo chọn ít nhất một vùng trên ảnh preview.")
             return
         try:
             for path in files:
@@ -600,17 +639,19 @@ class FUExamApp(tk.Tk):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with Image.open(path) as image:
                     image = image.convert("RGB")
-                    box = (
-                        round(x1 * image.width), round(y1 * image.height),
-                        round(x2 * image.width), round(y2 * image.height),
-                    )
-                    ImageDraw.Draw(image).rectangle(box, fill=rgb)
+                    draw = ImageDraw.Draw(image)
+                    for x1, y1, x2, y2, color in self.paint_regions:
+                        box = (
+                            round(x1 * image.width), round(y1 * image.height),
+                            round(x2 * image.width), round(y2 * image.height),
+                        )
+                        draw.rectangle(box, fill=ImageColor.getrgb(color))
                     kwargs = {"quality": 95} if target.suffix.lower() in {".jpg", ".jpeg", ".webp"} else {}
                     image.save(target, **kwargs)
         except Exception as exc:
             messagebox.showerror("Thất bại", str(exc))
             return
-        messagebox.showinfo("Hoàn tất", f"Đã tô màu {color} cho vùng đã chọn trên {len(files)} ảnh vào:\n{output}")
+        messagebox.showinfo("Hoàn tất", f"Đã tô {len(self.paint_regions)} vùng trên {len(files)} ảnh vào:\n{output}")
 
     def _build_shift_tab(self) -> None:
         tab = self.shift_tab

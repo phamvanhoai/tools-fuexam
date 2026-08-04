@@ -175,6 +175,6 @@ Tùy chọn **Tự giải phóng model khỏi RAM/VRAM sau khi nhận diện** �
 
 ### Chọn vùng và màu tô trên ảnh
 
-Trong tab **Tô màu vùng ảnh**, nạp ảnh preview rồi kéo chuột để chọn vùng chữ nhật. Màu tô có thể được chọn bằng bảng màu, nhập mã HEX như `#FFFFFF`, hoặc dùng **Bút chấm lấy màu** và nhấp trực tiếp lên ảnh. Vùng chọn được lưu theo tỷ lệ nên có thể áp dụng cho nhiều ảnh có kích thước khác nhau.
+Trong tab **Tô màu vùng ảnh**, nạp ảnh preview rồi kéo chuột để chọn vùng chữ nhật. Mỗi lần kéo sẽ thêm một vùng mới và ghi nhớ màu hiện tại, vì vậy một ảnh có thể có nhiều vùng với nhiều màu khác nhau. Có nút hoàn tác vùng cuối và xóa tất cả vùng. Màu tô có thể được chọn bằng bảng màu, nhập mã HEX như `#FFFFFF`, hoặc dùng **Bút chấm lấy màu** và nhấp trực tiếp lên ảnh. Các vùng được lưu theo tỷ lệ nên có thể áp dụng cho nhiều ảnh có kích thước khác nhau.
 
 Nếu tên mới trùng với một file không thuộc nhóm đang đổi, file cũ sẽ được chuyển vào thư mục `_rename_backup` trước. Việc đổi tên được thực hiện qua tên tạm nên các trường hợp hoán đổi hoặc xoay vòng tên không ghi đè mất ảnh.
