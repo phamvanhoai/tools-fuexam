@@ -142,7 +142,7 @@ tools/run_fuexam_gui.bat
 Ứng dụng gồm ba chức năng:
 
 - Nhận diện số câu trong ảnh bằng AI local và đổi tên file theo số câu.
-- Tô trắng vùng phía dưới ảnh.
+- Chọn vùng trực tiếp trên ảnh preview và tô bằng màu tùy chọn.
 - Dịch số thứ tự của một nhóm file ảnh.
 - Đổi prefix hàng loạt, giữ lại phần cuối sau dấu `_` và đuôi file.
 
@@ -172,5 +172,9 @@ Quy trình sử dụng an toàn:
 4. Bấm **Xem trước tên mới** rồi mới bấm **Thực hiện đổi tên**.
 
 Tùy chọn **Tự giải phóng model khỏi RAM/VRAM sau khi nhận diện** được bật mặc định. Khi hoàn tất, ứng dụng gửi `keep_alive: 0` cho Ollama để giải phóng model ngay; server Ollama vẫn chạy nền và không chiếm bộ nhớ của model.
+
+### Chọn vùng và màu tô trên ảnh
+
+Trong tab **Tô màu vùng ảnh**, nạp ảnh preview rồi kéo chuột để chọn vùng chữ nhật. Màu tô có thể được chọn bằng bảng màu, nhập mã HEX như `#FFFFFF`, hoặc dùng **Bút chấm lấy màu** và nhấp trực tiếp lên ảnh. Vùng chọn được lưu theo tỷ lệ nên có thể áp dụng cho nhiều ảnh có kích thước khác nhau.
 
 Nếu tên mới trùng với một file không thuộc nhóm đang đổi, file cũ sẽ được chuyển vào thư mục `_rename_backup` trước. Việc đổi tên được thực hiện qua tên tạm nên các trường hợp hoán đổi hoặc xoay vòng tên không ghi đè mất ảnh.

@@ -4,9 +4,9 @@ import queue
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageColor, ImageDraw, ImageTk
 
 from fuexam_core import (
     RenameItem,
@@ -42,7 +42,7 @@ class FUExamApp(tk.Tk):
         self.shift_tab = ttk.Frame(notebook, padding=10)
         self.prefix_tab = ttk.Frame(notebook, padding=10)
         notebook.add(self.rename_tab, text="AI đổi tên theo số câu")
-        notebook.add(self.white_tab, text="Tô trắng phần dưới")
+        notebook.add(self.white_tab, text="Tô màu vùng ảnh")
         notebook.add(self.shift_tab, text="Dịch số thứ tự")
         notebook.add(self.prefix_tab, text="Đổi prefix tên file")
         self._build_rename_tab()
@@ -395,18 +395,185 @@ class FUExamApp(tk.Tk):
     def _build_white_tab(self) -> None:
         tab = self.white_tab
         tab.columnconfigure(1, weight=1)
+        tab.rowconfigure(5, weight=1)
         self.white_input = tk.StringVar()
         self.white_output = tk.StringVar()
-        self.white_percent = tk.DoubleVar(value=70.0)
         self.white_recursive = tk.BooleanVar(value=False)
+        self.paint_color = tk.StringVar(value="#FFFFFF")
+        self.paint_region = (0.0, 0.70, 1.0, 1.0)
+        self.paint_preview_image: Image.Image | None = None
+        self.paint_preview_photo: ImageTk.PhotoImage | None = None
+        self.paint_preview_path: Path | None = None
+        self.paint_display_box = (0, 0, 1, 1)
+        self.paint_drag_start: tuple[int, int] | None = None
+        self.paint_eyedropper = False
         ttk.Label(tab, text="Thư mục nguồn:").grid(row=0, column=0, sticky="w", pady=5)
         self._folder_picker(tab, self.white_input, 0)
         ttk.Label(tab, text="Thư mục kết quả:").grid(row=1, column=0, sticky="w", pady=5)
         self._folder_picker(tab, self.white_output, 1)
-        ttk.Label(tab, text="Bắt đầu tô trắng tại % chiều cao:").grid(row=2, column=0, sticky="w", pady=5)
-        ttk.Spinbox(tab, from_=0, to=100, increment=1, textvariable=self.white_percent, width=8).grid(row=2, column=1, sticky="w", padx=6)
-        ttk.Checkbutton(tab, text="Bao gồm thư mục con", variable=self.white_recursive).grid(row=3, column=1, sticky="w", padx=6)
-        ttk.Button(tab, text="Tô trắng ảnh", command=self.run_whiten).grid(row=4, column=1, sticky="w", padx=6, pady=14)
+        controls = ttk.Frame(tab)
+        controls.grid(row=2, column=0, columnspan=3, sticky="ew", pady=6)
+        ttk.Button(controls, text="Nạp ảnh preview", command=self.load_paint_preview).pack(side="left")
+        ttk.Button(controls, text="Chọn màu...", command=self.choose_paint_color).pack(side="left", padx=(8, 4))
+        self.color_swatch = tk.Canvas(controls, width=28, height=22, highlightthickness=1, highlightbackground="#777")
+        self.color_swatch.pack(side="left", padx=3)
+        self.color_swatch.create_rectangle(0, 0, 30, 24, fill="#FFFFFF", outline="")
+        ttk.Label(controls, text="Mã màu:").pack(side="left", padx=(8, 3))
+        color_entry = ttk.Entry(controls, textvariable=self.paint_color, width=10)
+        color_entry.pack(side="left")
+        color_entry.bind("<FocusOut>", lambda _event: self.update_paint_color())
+        color_entry.bind("<Return>", lambda _event: self.update_paint_color())
+        self.eyedropper_button = ttk.Button(controls, text="Bút chấm lấy màu", command=self.toggle_eyedropper)
+        self.eyedropper_button.pack(side="left", padx=8)
+        ttk.Button(controls, text="Chọn lại toàn vùng dưới 70%", command=self.reset_paint_region).pack(side="left")
+
+        ttk.Label(
+            tab,
+            text="Kéo chuột trực tiếp trên ảnh để chọn vùng cần tô. Bút chấm: bật rồi nhấp vào một điểm trên ảnh.",
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 5))
+        action_row = ttk.Frame(tab)
+        action_row.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+        ttk.Checkbutton(action_row, text="Bao gồm thư mục con", variable=self.white_recursive).pack(side="left")
+        ttk.Button(action_row, text="Áp dụng vùng và màu cho tất cả ảnh", command=self.run_whiten).pack(side="left", padx=12)
+
+        self.paint_canvas = tk.Canvas(tab, background="#252525", highlightthickness=1, highlightbackground="#666")
+        self.paint_canvas.grid(row=5, column=0, columnspan=3, sticky="nsew")
+        self.paint_canvas.bind("<Configure>", lambda _event: self.draw_paint_preview())
+        self.paint_canvas.bind("<ButtonPress-1>", self.paint_canvas_press)
+        self.paint_canvas.bind("<B1-Motion>", self.paint_canvas_drag)
+        self.paint_canvas.bind("<ButtonRelease-1>", self.paint_canvas_release)
+
+    def load_paint_preview(self) -> None:
+        folder = Path(self.white_input.get())
+        if not folder.is_dir():
+            messagebox.showerror("Lỗi", "Hãy chọn thư mục nguồn hợp lệ.")
+            return
+        files = list_images(folder, self.white_recursive.get())
+        if not files:
+            messagebox.showerror("Lỗi", "Không tìm thấy ảnh trong thư mục nguồn.")
+            return
+        self.paint_preview_path = files[0]
+        with Image.open(files[0]) as image:
+            self.paint_preview_image = image.convert("RGB")
+        self.draw_paint_preview()
+        self.status.set(f"Đang preview: {files[0].name}. Kéo chuột để chọn vùng tô.")
+
+    def draw_paint_preview(self) -> None:
+        if self.paint_preview_image is None or not hasattr(self, "paint_canvas"):
+            return
+        canvas_w = max(1, self.paint_canvas.winfo_width())
+        canvas_h = max(1, self.paint_canvas.winfo_height())
+        source = self.paint_preview_image
+        scale = min(canvas_w / source.width, canvas_h / source.height)
+        width = max(1, round(source.width * scale))
+        height = max(1, round(source.height * scale))
+        left = (canvas_w - width) // 2
+        top = (canvas_h - height) // 2
+        display = source.resize((width, height), Image.Resampling.LANCZOS)
+        self.paint_preview_photo = ImageTk.PhotoImage(display)
+        self.paint_display_box = (left, top, width, height)
+        self.paint_canvas.delete("all")
+        self.paint_canvas.create_image(left, top, image=self.paint_preview_photo, anchor="nw", tags="preview")
+        self.draw_paint_selection()
+
+    def draw_paint_selection(self) -> None:
+        self.paint_canvas.delete("selection")
+        left, top, width, height = self.paint_display_box
+        x1, y1, x2, y2 = self.paint_region
+        color = self.valid_paint_color(show_error=False) or "#FFFFFF"
+        self.paint_canvas.create_rectangle(
+            left + x1 * width,
+            top + y1 * height,
+            left + x2 * width,
+            top + y2 * height,
+            outline="#FF3030",
+            width=3,
+            fill=color,
+            stipple="gray25",
+            tags="selection",
+        )
+
+    def canvas_to_normalized(self, x: int, y: int) -> tuple[float, float]:
+        left, top, width, height = self.paint_display_box
+        nx = max(0.0, min(1.0, (x - left) / width))
+        ny = max(0.0, min(1.0, (y - top) / height))
+        return nx, ny
+
+    def point_inside_preview(self, x: int, y: int) -> bool:
+        left, top, width, height = self.paint_display_box
+        return left <= x <= left + width and top <= y <= top + height
+
+    def paint_canvas_press(self, event: tk.Event) -> None:
+        if self.paint_preview_image is None or not self.point_inside_preview(event.x, event.y):
+            return
+        if self.paint_eyedropper:
+            nx, ny = self.canvas_to_normalized(event.x, event.y)
+            px = min(self.paint_preview_image.width - 1, round(nx * (self.paint_preview_image.width - 1)))
+            py = min(self.paint_preview_image.height - 1, round(ny * (self.paint_preview_image.height - 1)))
+            red, green, blue = self.paint_preview_image.getpixel((px, py))
+            self.paint_color.set(f"#{red:02X}{green:02X}{blue:02X}")
+            self.update_paint_color()
+            self.paint_eyedropper = False
+            self.eyedropper_button.configure(text="Bút chấm lấy màu")
+            self.status.set(f"Đã lấy màu {self.paint_color.get()} tại điểm vừa chọn.")
+            return
+        self.paint_drag_start = (event.x, event.y)
+
+    def paint_canvas_drag(self, event: tk.Event) -> None:
+        if self.paint_drag_start is None:
+            return
+        start_x, start_y = self.paint_drag_start
+        x1, y1 = self.canvas_to_normalized(start_x, start_y)
+        x2, y2 = self.canvas_to_normalized(event.x, event.y)
+        self.paint_region = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+        self.draw_paint_selection()
+
+    def paint_canvas_release(self, event: tk.Event) -> None:
+        if self.paint_drag_start is None:
+            return
+        self.paint_canvas_drag(event)
+        self.paint_drag_start = None
+        x1, y1, x2, y2 = self.paint_region
+        self.status.set(f"Vùng chọn: X {x1:.1%}–{x2:.1%}, Y {y1:.1%}–{y2:.1%}.")
+
+    def valid_paint_color(self, show_error: bool = True) -> str | None:
+        value = self.paint_color.get().strip()
+        if value and not value.startswith("#"):
+            value = f"#{value}"
+        try:
+            ImageColor.getrgb(value)
+        except ValueError:
+            if show_error:
+                messagebox.showerror("Màu không hợp lệ", "Nhập mã màu dạng #RRGGBB, ví dụ #FFFFFF.")
+            return None
+        return value.upper()
+
+    def update_paint_color(self) -> None:
+        color = self.valid_paint_color()
+        if color is None:
+            return
+        self.paint_color.set(color)
+        self.color_swatch.itemconfigure("all", fill=color)
+        self.draw_paint_selection()
+
+    def choose_paint_color(self) -> None:
+        selected = colorchooser.askcolor(color=self.paint_color.get(), title="Chọn màu tô")
+        if selected[1]:
+            self.paint_color.set(selected[1].upper())
+            self.update_paint_color()
+
+    def toggle_eyedropper(self) -> None:
+        if self.paint_preview_image is None:
+            self.load_paint_preview()
+            if self.paint_preview_image is None:
+                return
+        self.paint_eyedropper = not self.paint_eyedropper
+        text = "Đang lấy màu — nhấp lên ảnh" if self.paint_eyedropper else "Bút chấm lấy màu"
+        self.eyedropper_button.configure(text=text)
+
+    def reset_paint_region(self) -> None:
+        self.paint_region = (0.0, 0.70, 1.0, 1.0)
+        self.draw_paint_selection()
 
     def run_whiten(self) -> None:
         source = Path(self.white_input.get())
@@ -418,6 +585,14 @@ class FUExamApp(tk.Tk):
             messagebox.showerror("Lỗi", "Hãy chọn thư mục kết quả khác thư mục nguồn.")
             return
         files = list_images(source, self.white_recursive.get())
+        color = self.valid_paint_color()
+        if color is None:
+            return
+        rgb = ImageColor.getrgb(color)
+        x1, y1, x2, y2 = self.paint_region
+        if x2 - x1 < 0.001 or y2 - y1 < 0.001:
+            messagebox.showerror("Lỗi", "Vùng chọn quá nhỏ. Hãy kéo chọn lại trên ảnh preview.")
+            return
         try:
             for path in files:
                 relative = path.relative_to(source)
@@ -425,14 +600,17 @@ class FUExamApp(tk.Tk):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with Image.open(path) as image:
                     image = image.convert("RGB")
-                    y = max(0, min(image.height, round(image.height * self.white_percent.get() / 100)))
-                    ImageDraw.Draw(image).rectangle((0, y, image.width, image.height), fill="white")
+                    box = (
+                        round(x1 * image.width), round(y1 * image.height),
+                        round(x2 * image.width), round(y2 * image.height),
+                    )
+                    ImageDraw.Draw(image).rectangle(box, fill=rgb)
                     kwargs = {"quality": 95} if target.suffix.lower() in {".jpg", ".jpeg", ".webp"} else {}
                     image.save(target, **kwargs)
         except Exception as exc:
             messagebox.showerror("Thất bại", str(exc))
             return
-        messagebox.showinfo("Hoàn tất", f"Đã xử lý {len(files)} ảnh vào:\n{output}")
+        messagebox.showinfo("Hoàn tất", f"Đã tô màu {color} cho vùng đã chọn trên {len(files)} ảnh vào:\n{output}")
 
     def _build_shift_tab(self) -> None:
         tab = self.shift_tab
