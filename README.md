@@ -145,6 +145,7 @@ tools/run_fuexam_gui.bat
 - Chọn vùng trực tiếp trên ảnh preview và tô bằng màu tùy chọn.
 - Dịch số thứ tự của một nhóm file ảnh.
 - Đổi prefix hàng loạt, giữ lại phần cuối sau dấu `_` và đuôi file.
+- Cắt một ảnh dài thành nhiều ảnh bằng các đường đánh dấu trực tiếp trên preview cuộn dọc.
 
 Chế độ nhận diện mặc định là **Tesseract OCR**, nhẹ và nhanh hơn AI vision local. Trên Windows có thể cài bằng:
 
@@ -176,5 +177,9 @@ Tùy chọn **Tự giải phóng model khỏi RAM/VRAM sau khi nhận diện** �
 ### Chọn vùng và màu tô trên ảnh
 
 Trong tab **Tô màu vùng ảnh**, nạp ảnh preview rồi kéo chuột để chọn vùng chữ nhật. Mỗi lần kéo sẽ thêm một vùng mới và ghi nhớ màu hiện tại, vì vậy một ảnh có thể có nhiều vùng với nhiều màu khác nhau. Có nút hoàn tác vùng cuối và xóa tất cả vùng. Màu tô có thể được chọn bằng bảng màu, nhập mã HEX như `#FFFFFF`, hoặc dùng **Bút chấm lấy màu** và nhấp trực tiếp lên ảnh. Các vùng được lưu theo tỷ lệ nên có thể áp dụng cho nhiều ảnh có kích thước khác nhau.
+
+### Cắt ảnh dài
+
+Trong tab **Cắt ảnh dài**, chọn một ảnh để xem preview cuộn dọc. Nhấp chuột trái để thêm đường cắt ngang; giữ và kéo một đường đỏ để di chuyển; nhấp chuột phải gần đường để xóa. Có thể phóng to/thu nhỏ bằng các nút `−`/`+` hoặc `Ctrl + lăn chuột`; lăn chuột bình thường dùng để cuộn ảnh. Khi xuất, tọa độ đường cắt được quy đổi về độ phân giải ảnh gốc và các phần được đánh số `_001`, `_002`, ... trong thư mục kết quả riêng.
 
 Nếu tên mới trùng với một file không thuộc nhóm đang đổi, file cũ sẽ được chuyển vào thư mục `_rename_backup` trước. Việc đổi tên được thực hiện qua tên tạm nên các trường hợp hoán đổi hoặc xoay vòng tên không ghi đè mất ảnh.

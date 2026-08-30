@@ -41,14 +41,17 @@ class FUExamApp(tk.Tk):
         self.white_tab = ttk.Frame(notebook, padding=10)
         self.shift_tab = ttk.Frame(notebook, padding=10)
         self.prefix_tab = ttk.Frame(notebook, padding=10)
+        self.crop_tab = ttk.Frame(notebook, padding=10)
         notebook.add(self.rename_tab, text="AI đổi tên theo số câu")
         notebook.add(self.white_tab, text="Tô màu vùng ảnh")
         notebook.add(self.shift_tab, text="Dịch số thứ tự")
         notebook.add(self.prefix_tab, text="Đổi prefix tên file")
+        notebook.add(self.crop_tab, text="Cắt ảnh dài")
         self._build_rename_tab()
         self._build_white_tab()
         self._build_shift_tab()
         self._build_prefix_tab()
+        self._build_crop_tab()
         self.status = tk.StringVar(value="Sẵn sàng")
         ttk.Label(self, textvariable=self.status, anchor="w").pack(fill="x", padx=12, pady=(0, 8))
 
@@ -782,6 +785,216 @@ class FUExamApp(tk.Tk):
             text += f"\nĐã backup {collision_count} file trùng vào:\n{backup}"
         messagebox.showinfo("Hoàn tất", text)
         self.preview_prefix_rename()
+
+    def _build_crop_tab(self) -> None:
+        tab = self.crop_tab
+        tab.columnconfigure(1, weight=1)
+        tab.rowconfigure(3, weight=1)
+        self.crop_input = tk.StringVar()
+        self.crop_output = tk.StringVar()
+        self.crop_image: Image.Image | None = None
+        self.crop_photo: ImageTk.PhotoImage | None = None
+        self.crop_lines: list[float] = []
+        self.crop_preview_scale = 1.0
+        self.crop_zoom = 1.0
+        self.crop_drag_line: int | None = None
+
+        ttk.Label(tab, text="Ảnh dài:").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(tab, textvariable=self.crop_input).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(tab, text="Chọn ảnh", command=self.choose_crop_image).grid(row=0, column=2)
+        ttk.Label(tab, text="Thư mục kết quả:").grid(row=1, column=0, sticky="w", pady=4)
+        self._folder_picker(tab, self.crop_output, 1)
+
+        actions = ttk.Frame(tab)
+        actions.grid(row=2, column=0, columnspan=3, sticky="ew", pady=6)
+        ttk.Button(actions, text="Hoàn tác đường cuối", command=self.undo_crop_line).pack(side="left")
+        ttk.Button(actions, text="Xóa tất cả đường", command=self.clear_crop_lines).pack(side="left", padx=6)
+        ttk.Button(actions, text="Xuất các ảnh đã cắt", command=self.export_crops).pack(side="left")
+        ttk.Separator(actions, orient="vertical").pack(side="left", fill="y", padx=10)
+        ttk.Button(actions, text="−", width=3, command=lambda: self.change_crop_zoom(0.8)).pack(side="left")
+        self.crop_zoom_text = tk.StringVar(value="100%")
+        ttk.Label(actions, textvariable=self.crop_zoom_text, width=7, anchor="center").pack(side="left")
+        ttk.Button(actions, text="+", width=3, command=lambda: self.change_crop_zoom(1.25)).pack(side="left")
+        ttk.Button(actions, text="Vừa chiều rộng", command=self.reset_crop_zoom).pack(side="left", padx=(5, 0))
+        self.crop_info = tk.StringVar(value="Chọn ảnh, sau đó nhấp lên preview để đặt các đường cắt ngang.")
+        ttk.Label(actions, textvariable=self.crop_info).pack(side="left", padx=14)
+
+        preview_frame = ttk.Frame(tab)
+        preview_frame.grid(row=3, column=0, columnspan=3, sticky="nsew")
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(0, weight=1)
+        self.crop_canvas = tk.Canvas(preview_frame, background="#282828", highlightthickness=1, highlightbackground="#666")
+        self.crop_canvas.grid(row=0, column=0, sticky="nsew")
+        crop_scroll = ttk.Scrollbar(preview_frame, orient="vertical", command=self.crop_canvas.yview)
+        crop_scroll.grid(row=0, column=1, sticky="ns")
+        self.crop_canvas.configure(yscrollcommand=crop_scroll.set)
+        self.crop_canvas.bind("<ButtonPress-1>", self.crop_line_press)
+        self.crop_canvas.bind("<B1-Motion>", self.crop_line_drag)
+        self.crop_canvas.bind("<ButtonRelease-1>", self.crop_line_release)
+        self.crop_canvas.bind("<Button-3>", self.remove_nearest_crop_line)
+        self.crop_canvas.bind("<MouseWheel>", self.scroll_crop_canvas)
+
+    def choose_crop_image(self) -> None:
+        initial = str(Path(self.crop_input.get()).parent) if self.crop_input.get() else None
+        selected = filedialog.askopenfilename(
+            initialdir=initial,
+            title="Chọn ảnh dài cần cắt",
+            filetypes=[("Ảnh", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff"), ("Tất cả file", "*.*")],
+        )
+        if not selected:
+            return
+        path = Path(selected)
+        self.crop_input.set(str(path))
+        if not self.crop_output.get():
+            self.crop_output.set(str(path.parent / f"{path.stem}_cut"))
+        try:
+            with Image.open(path) as image:
+                self.crop_image = image.convert("RGB")
+        except Exception as exc:
+            messagebox.showerror("Không mở được ảnh", str(exc))
+            return
+        self.crop_lines.clear()
+        self.crop_zoom = 1.0
+        self.crop_zoom_text.set("100%")
+        self.draw_crop_preview()
+        self.status.set(f"Đã nạp {path.name}: {self.crop_image.width} × {self.crop_image.height} px.")
+
+    def draw_crop_preview(self) -> None:
+        if self.crop_image is None:
+            return
+        self.crop_canvas.update_idletasks()
+        old_preview_height = self.crop_image.height * self.crop_preview_scale
+        old_top_ratio = self.crop_canvas.canvasy(0) / old_preview_height if old_preview_height > 1 else 0.0
+        available_width = max(300, self.crop_canvas.winfo_width() - 30)
+        preview_width = min(1600, max(150, round(available_width * self.crop_zoom)))
+        self.crop_preview_scale = preview_width / self.crop_image.width
+        preview_height = max(1, round(self.crop_image.height * self.crop_preview_scale))
+        preview = self.crop_image.resize((preview_width, preview_height), Image.Resampling.LANCZOS)
+        self.crop_photo = ImageTk.PhotoImage(preview)
+        self.crop_canvas.delete("all")
+        self.crop_canvas.create_image(0, 0, image=self.crop_photo, anchor="nw", tags="crop_image")
+        self.crop_canvas.configure(scrollregion=(0, 0, preview_width, preview_height))
+        self.crop_canvas.yview_moveto(max(0.0, min(1.0, old_top_ratio)))
+        self.draw_crop_lines()
+
+    def draw_crop_lines(self) -> None:
+        self.crop_canvas.delete("crop_line")
+        if self.crop_image is None:
+            return
+        width = round(self.crop_image.width * self.crop_preview_scale)
+        for index, ratio in enumerate(sorted(self.crop_lines), 1):
+            y = ratio * self.crop_image.height * self.crop_preview_scale
+            self.crop_canvas.create_line(0, y, width, y, fill="#FF2020", width=3, tags="crop_line")
+            self.crop_canvas.create_text(8, y - 5, text=f"Cắt {index}", fill="#FF2020", anchor="sw", font=("Segoe UI", 11, "bold"), tags="crop_line")
+        self.crop_info.set(f"{len(self.crop_lines)} đường cắt → {len(self.crop_lines) + 1} ảnh kết quả")
+
+    def crop_event_ratio(self, event: tk.Event) -> float:
+        if self.crop_image is None:
+            return 0.0
+        preview_height = self.crop_image.height * self.crop_preview_scale
+        return max(0.0, min(1.0, self.crop_canvas.canvasy(event.y) / preview_height))
+
+    def crop_line_press(self, event: tk.Event) -> None:
+        if self.crop_image is None:
+            return
+        ratio = self.crop_event_ratio(event)
+        if self.crop_lines:
+            nearest_index = min(range(len(self.crop_lines)), key=lambda index: abs(self.crop_lines[index] - ratio))
+            distance = abs(self.crop_lines[nearest_index] - ratio) * self.crop_image.height * self.crop_preview_scale
+            if distance <= 12:
+                self.crop_drag_line = nearest_index
+                self.crop_canvas.configure(cursor="sb_v_double_arrow")
+                return
+        if not 0.002 < ratio < 0.998:
+            return
+        min_gap = 3 / self.crop_image.height
+        if any(abs(existing - ratio) < min_gap for existing in self.crop_lines):
+            return
+        self.crop_lines.append(ratio)
+        self.draw_crop_lines()
+        self.status.set(f"Đã thêm đường cắt tại Y = {round(ratio * self.crop_image.height)} px của ảnh gốc.")
+
+    def crop_line_drag(self, event: tk.Event) -> None:
+        if self.crop_drag_line is None or self.crop_image is None:
+            return
+        ratio = max(0.002, min(0.998, self.crop_event_ratio(event)))
+        self.crop_lines[self.crop_drag_line] = ratio
+        self.draw_crop_lines()
+        self.status.set(f"Đang di chuyển đường cắt: Y = {round(ratio * self.crop_image.height)} px.")
+
+    def crop_line_release(self, _event: tk.Event) -> None:
+        if self.crop_drag_line is not None:
+            self.crop_drag_line = None
+            self.crop_canvas.configure(cursor="")
+            self.status.set("Đã cập nhật vị trí đường cắt.")
+
+    def remove_nearest_crop_line(self, event: tk.Event) -> None:
+        if not self.crop_lines or self.crop_image is None:
+            return
+        ratio = self.crop_canvas.canvasy(event.y) / (self.crop_image.height * self.crop_preview_scale)
+        nearest = min(self.crop_lines, key=lambda value: abs(value - ratio))
+        if abs(nearest - ratio) * self.crop_image.height * self.crop_preview_scale <= 15:
+            self.crop_lines.remove(nearest)
+            self.draw_crop_lines()
+
+    def undo_crop_line(self) -> None:
+        if self.crop_lines:
+            self.crop_lines.pop()
+            self.draw_crop_lines()
+
+    def clear_crop_lines(self) -> None:
+        self.crop_lines.clear()
+        self.draw_crop_lines()
+
+    def scroll_crop_canvas(self, event: tk.Event) -> None:
+        if event.state & 0x0004:
+            self.change_crop_zoom(1.15 if event.delta > 0 else 1 / 1.15)
+        else:
+            self.crop_canvas.yview_scroll(int(-event.delta / 120), "units")
+
+    def change_crop_zoom(self, factor: float) -> None:
+        if self.crop_image is None:
+            return
+        self.crop_zoom = max(0.25, min(2.0, self.crop_zoom * factor))
+        self.crop_zoom_text.set(f"{round(self.crop_zoom * 100)}%")
+        self.draw_crop_preview()
+
+    def reset_crop_zoom(self) -> None:
+        self.crop_zoom = 1.0
+        self.crop_zoom_text.set("100%")
+        self.draw_crop_preview()
+
+    def export_crops(self) -> None:
+        source = Path(self.crop_input.get())
+        if self.crop_image is None or not source.is_file():
+            messagebox.showerror("Lỗi", "Hãy chọn và nạp ảnh cần cắt.")
+            return
+        if not self.crop_lines:
+            messagebox.showerror("Lỗi", "Chưa có đường cắt. Hãy nhấp lên preview để đánh dấu.")
+            return
+        output = Path(self.crop_output.get()) if self.crop_output.get() else source.parent / f"{source.stem}_cut"
+        if output.exists() and not output.is_dir():
+            messagebox.showerror("Lỗi", "Đường dẫn kết quả đang là một file, không phải thư mục.")
+            return
+        output.mkdir(parents=True, exist_ok=True)
+        boundaries = [0]
+        boundaries.extend(sorted({max(1, min(self.crop_image.height - 1, round(r * self.crop_image.height))) for r in self.crop_lines}))
+        boundaries.append(self.crop_image.height)
+        created: list[Path] = []
+        try:
+            for index, (top, bottom) in enumerate(zip(boundaries, boundaries[1:]), 1):
+                if bottom <= top:
+                    continue
+                piece = self.crop_image.crop((0, top, self.crop_image.width, bottom))
+                target = output / f"{source.stem}_{index:03d}{source.suffix.lower()}"
+                kwargs = {"quality": 95} if target.suffix in {".jpg", ".jpeg", ".webp"} else {}
+                piece.save(target, **kwargs)
+                created.append(target)
+        except Exception as exc:
+            messagebox.showerror("Cắt ảnh thất bại", str(exc))
+            return
+        messagebox.showinfo("Hoàn tất", f"Đã xuất {len(created)} ảnh vào:\n{output}")
+        self.status.set(f"Đã cắt {source.name} thành {len(created)} ảnh.")
 
 
 if __name__ == "__main__":
