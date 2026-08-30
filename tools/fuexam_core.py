@@ -200,9 +200,19 @@ def detect_question_with_tesseract(image_path: Path, timeout: int = 30) -> int:
         error = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"Tesseract gặp lỗi: {error}")
     text = result.stdout.decode("utf-8", errors="replace")
-    match = re.search(r"(?:multiple\s+choice\s+)?question\s*[:#-]?\s*(\d{1,4})\b", text, re.IGNORECASE)
+    # Vietnamese headers are commonly rendered as "Câu 20". With the English
+    # Tesseract language pack the accent is usually dropped and becomes
+    # "Cau 20", so accept both forms in addition to the English "Question 20".
+    match = re.search(
+        r"\b(?:multiple\s+choice\s+question|question|c[aâ]u)\s*[:#.-]?\s*(\d{1,4})\b",
+        text,
+        re.IGNORECASE,
+    )
     if not match:
-        raise ValueError(f"Tesseract không tìm thấy 'Question + số'. Nội dung đọc được: {text.strip()[:100]}")
+        raise ValueError(
+            "Tesseract không tìm thấy 'Câu/Question + số'. "
+            f"Nội dung đọc được: {text.strip()[:100]}"
+        )
     return int(match.group(1))
 
 
