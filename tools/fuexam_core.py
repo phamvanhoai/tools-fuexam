@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import io
 import json
 import os
@@ -8,6 +9,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
@@ -214,6 +216,60 @@ def detect_question_with_tesseract(image_path: Path, timeout: int = 30) -> int:
             f"Nội dung đọc được: {text.strip()[:100]}"
         )
     return int(match.group(1))
+
+
+def _normalize_ocr_text(value: str) -> str:
+    value = value.lower().replace("đ", "d")
+    value = unicodedata.normalize("NFD", value)
+    value = "".join(char for char in value if unicodedata.category(char) != "Mn")
+    return re.sub(r"[^a-z0-9]+", " ", value).strip()
+
+
+def locate_text_lines_with_tesseract(
+    image_path: Path,
+    query: str,
+    timeout: int = 45,
+) -> list[tuple[int, int, int, int, str]]:
+    """Return full OCR line boxes containing query as (left, top, right, bottom, text)."""
+    executable = find_tesseract_executable()
+    if executable is None:
+        raise RuntimeError("Chưa tìm thấy Tesseract OCR. Hãy cài Tesseract OCR cho Windows rồi mở lại tool.")
+    normalized_query = _normalize_ocr_text(query)
+    if not normalized_query:
+        raise ValueError("Cụm chữ cần tìm không được để trống.")
+    try:
+        result = subprocess.run(
+            [str(executable), str(image_path), "stdout", "-l", "eng", "--psm", "6", "tsv"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Tesseract tìm chữ quá thời gian cho phép.") from exc
+    if result.returncode != 0:
+        error = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Tesseract gặp lỗi: {error}")
+
+    decoded = result.stdout.decode("utf-8", errors="replace")
+    groups: dict[tuple[str, str, str, str], list[dict[str, str]]] = {}
+    for row in csv.DictReader(io.StringIO(decoded), delimiter="\t"):
+        if row.get("level") != "5" or not row.get("text", "").strip():
+            continue
+        key = (row.get("page_num", ""), row.get("block_num", ""), row.get("par_num", ""), row.get("line_num", ""))
+        groups.setdefault(key, []).append(row)
+
+    matches: list[tuple[int, int, int, int, str]] = []
+    for words in groups.values():
+        line_text = " ".join(word["text"].strip() for word in words)
+        if normalized_query not in _normalize_ocr_text(line_text):
+            continue
+        left = min(int(word["left"]) for word in words)
+        top = min(int(word["top"]) for word in words)
+        right = max(int(word["left"]) + int(word["width"]) for word in words)
+        bottom = max(int(word["top"]) + int(word["height"]) for word in words)
+        matches.append((left, top, right, bottom, line_text))
+    return matches
 
 
 def ensure_ollama_server(endpoint: str = "http://127.0.0.1:11434") -> list[str]:

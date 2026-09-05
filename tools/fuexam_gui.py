@@ -16,6 +16,7 @@ from fuexam_core import (
     ensure_ollama_server,
     infer_name_parts,
     list_images,
+    locate_text_lines_with_tesseract,
     make_target,
     unload_ollama_model,
     validate_rename_items,
@@ -406,6 +407,9 @@ class FUExamApp(tk.Tk):
         self.paint_regions: list[tuple[float, float, float, float, str]] = [(0.0, 0.70, 1.0, 1.0, "#FFFFFF")]
         self.paint_region: tuple[float, float, float, float] | None = None
         self.paint_default_region = True
+        self.paint_mode = tk.StringVar(value="Vùng đánh dấu thủ công")
+        self.follow_text = tk.StringVar(value="Đáp án tham khảo")
+        self.follow_padding = tk.IntVar(value=12)
         self.paint_preview_image: Image.Image | None = None
         self.paint_preview_photo: ImageTk.PhotoImage | None = None
         self.paint_preview_path: Path | None = None
@@ -440,6 +444,19 @@ class FUExamApp(tk.Tk):
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(0, 5))
         action_row = ttk.Frame(tab)
         action_row.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+        ttk.Label(action_row, text="Chế độ:").pack(side="left")
+        ttk.Combobox(
+            action_row,
+            textvariable=self.paint_mode,
+            values=("Vùng đánh dấu thủ công", "Theo dòng chữ (Tesseract)"),
+            state="readonly",
+            width=25,
+        ).pack(side="left", padx=(4, 8))
+        ttk.Label(action_row, text="Tìm:").pack(side="left")
+        ttk.Entry(action_row, textvariable=self.follow_text, width=22).pack(side="left", padx=4)
+        ttk.Label(action_row, text="Đệm px:").pack(side="left")
+        ttk.Spinbox(action_row, from_=0, to=100, textvariable=self.follow_padding, width=5).pack(side="left", padx=4)
+        ttk.Button(action_row, text="Xem vùng tìm được", command=self.preview_follow_text).pack(side="left", padx=5)
         ttk.Checkbutton(action_row, text="Bao gồm thư mục con", variable=self.white_recursive).pack(side="left")
         ttk.Button(action_row, text="Áp dụng vùng và màu cho tất cả ảnh", command=self.run_whiten).pack(side="left", padx=12)
 
@@ -622,6 +639,35 @@ class FUExamApp(tk.Tk):
         self.draw_paint_selection()
         self.status.set("Đã xóa tất cả vùng tô. Kéo trên ảnh để tạo vùng mới.")
 
+    def preview_follow_text(self) -> None:
+        self.paint_mode.set("Theo dòng chữ (Tesseract)")
+        if self.paint_preview_path is None:
+            self.load_paint_preview()
+        if self.paint_preview_path is None or self.paint_preview_image is None:
+            return
+        try:
+            boxes = locate_text_lines_with_tesseract(self.paint_preview_path, self.follow_text.get())
+        except Exception as exc:
+            messagebox.showerror("Không thể tìm chữ", str(exc))
+            return
+        if not boxes:
+            messagebox.showwarning("Không tìm thấy", f"Không tìm thấy dòng chứa: {self.follow_text.get()}")
+            return
+        padding = max(0, self.follow_padding.get())
+        self.paint_regions = []
+        for left, top, right, bottom, _text in boxes:
+            self.paint_regions.append((
+                max(0, left - padding) / self.paint_preview_image.width,
+                max(0, top - padding) / self.paint_preview_image.height,
+                min(self.paint_preview_image.width, right + padding) / self.paint_preview_image.width,
+                min(self.paint_preview_image.height, bottom + padding) / self.paint_preview_image.height,
+                self.valid_paint_color(show_error=False) or "#FFFFFF",
+            ))
+        self.paint_default_region = False
+        self.paint_region = None
+        self.draw_paint_selection()
+        self.status.set(f"Tesseract tìm thấy {len(boxes)} dòng trên ảnh preview.")
+
     def run_whiten(self) -> None:
         source = Path(self.white_input.get())
         if not source.is_dir():
@@ -632,9 +678,15 @@ class FUExamApp(tk.Tk):
             messagebox.showerror("Lỗi", "Hãy chọn thư mục kết quả khác thư mục nguồn.")
             return
         files = list_images(source, self.white_recursive.get())
-        if not self.paint_regions:
+        follow_mode = self.paint_mode.get().startswith("Theo dòng chữ")
+        if not follow_mode and not self.paint_regions:
             messagebox.showerror("Lỗi", "Chưa có vùng tô. Hãy kéo chọn ít nhất một vùng trên ảnh preview.")
             return
+        color = self.valid_paint_color()
+        if color is None:
+            return
+        missing: list[str] = []
+        matched_lines = 0
         try:
             for path in files:
                 relative = path.relative_to(source)
@@ -643,18 +695,40 @@ class FUExamApp(tk.Tk):
                 with Image.open(path) as image:
                     image = image.convert("RGB")
                     draw = ImageDraw.Draw(image)
-                    for x1, y1, x2, y2, color in self.paint_regions:
-                        box = (
-                            round(x1 * image.width), round(y1 * image.height),
-                            round(x2 * image.width), round(y2 * image.height),
-                        )
-                        draw.rectangle(box, fill=ImageColor.getrgb(color))
+                    if follow_mode:
+                        boxes = locate_text_lines_with_tesseract(path, self.follow_text.get())
+                        if not boxes:
+                            missing.append(path.name)
+                            continue
+                        padding = max(0, self.follow_padding.get())
+                        for left, top, right, bottom, _text in boxes:
+                            box = (
+                                max(0, left - padding), max(0, top - padding),
+                                min(image.width, right + padding), min(image.height, bottom + padding),
+                            )
+                            draw.rectangle(box, fill=ImageColor.getrgb(color))
+                            matched_lines += 1
+                    else:
+                        for x1, y1, x2, y2, region_color in self.paint_regions:
+                            box = (
+                                round(x1 * image.width), round(y1 * image.height),
+                                round(x2 * image.width), round(y2 * image.height),
+                            )
+                            draw.rectangle(box, fill=ImageColor.getrgb(region_color))
                     kwargs = {"quality": 95} if target.suffix.lower() in {".jpg", ".jpeg", ".webp"} else {}
                     image.save(target, **kwargs)
         except Exception as exc:
             messagebox.showerror("Thất bại", str(exc))
             return
-        messagebox.showinfo("Hoàn tất", f"Đã tô {len(self.paint_regions)} vùng trên {len(files)} ảnh vào:\n{output}")
+        if follow_mode:
+            detail = f"Đã tô {matched_lines} dòng trên {len(files) - len(missing)}/{len(files)} ảnh vào:\n{output}"
+            if missing:
+                detail += f"\n\nKhông tìm thấy chữ trong {len(missing)} ảnh:\n" + "\n".join(missing[:10])
+                if len(missing) > 10:
+                    detail += f"\n... và {len(missing) - 10} ảnh khác"
+            messagebox.showinfo("Hoàn tất", detail)
+        else:
+            messagebox.showinfo("Hoàn tất", f"Đã tô {len(self.paint_regions)} vùng trên {len(files)} ảnh vào:\n{output}")
 
     def _build_shift_tab(self) -> None:
         tab = self.shift_tab

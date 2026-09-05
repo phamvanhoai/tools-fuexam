@@ -178,6 +178,8 @@ Tùy chọn **Tự giải phóng model khỏi RAM/VRAM sau khi nhận diện** �
 
 Trong tab **Tô màu vùng ảnh**, nạp ảnh preview rồi kéo chuột để chọn vùng chữ nhật. Mỗi lần kéo sẽ thêm một vùng mới và ghi nhớ màu hiện tại, vì vậy một ảnh có thể có nhiều vùng với nhiều màu khác nhau. Có nút hoàn tác vùng cuối và xóa tất cả vùng. Màu tô có thể được chọn bằng bảng màu, nhập mã HEX như `#FFFFFF`, hoặc dùng **Bút chấm lấy màu** và nhấp trực tiếp lên ảnh. Các vùng được lưu theo tỷ lệ nên có thể áp dụng cho nhiều ảnh có kích thước khác nhau.
 
+Chế độ **Theo dòng chữ (Tesseract)** tự tìm dòng chứa cụm chữ đã nhập, mặc định là `Đáp án tham khảo`, rồi tô toàn bộ dòng kể cả ký tự đáp án A/B/C/... bằng màu đã chọn. Khoảng đệm quanh dòng có thể tùy chỉnh theo pixel. Nút **Xem vùng tìm được** hiển thị kết quả OCR trên ảnh preview trước khi áp dụng hàng loạt.
+
 ### Cắt ảnh dài
 
 Trong tab **Cắt ảnh dài**, chọn một ảnh để xem preview cuộn dọc. Nhấp chuột trái để thêm đường cắt ngang; giữ và kéo một đường đỏ để di chuyển; nhấp chuột phải gần đường để xóa. Có thể phóng to/thu nhỏ bằng các nút `−`/`+` hoặc `Ctrl + lăn chuột`; lăn chuột bình thường dùng để cuộn ảnh. Khi xuất, tọa độ đường cắt được quy đổi về độ phân giải ảnh gốc và các phần được đánh số `_001`, `_002`, ... trong thư mục kết quả riêng.
