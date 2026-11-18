@@ -143,6 +143,8 @@ tools/run_fuexam_gui.bat
 
 - Nhận diện số câu trong ảnh bằng AI local và đổi tên file theo số câu.
 - Chọn vùng trực tiếp trên ảnh preview và tô bằng màu tùy chọn.
+- Làm sạch watermark xám nhạt hàng loạt, có xem trước và điều chỉnh mức lọc.
+- Đóng logo watermark ở giữa ảnh, lặp toàn ảnh hoặc kết hợp cả hai.
 - Dịch số thứ tự của một nhóm file ảnh.
 - Đổi prefix hàng loạt, giữ lại phần cuối sau dấu `_` và đuôi file.
 - Cắt một ảnh dài thành nhiều ảnh bằng các đường đánh dấu trực tiếp trên preview cuộn dọc.
@@ -179,6 +181,14 @@ Tùy chọn **Tự giải phóng model khỏi RAM/VRAM sau khi nhận diện** �
 Trong tab **Tô màu vùng ảnh**, nạp ảnh preview rồi kéo chuột để chọn vùng chữ nhật. Mỗi lần kéo sẽ thêm một vùng mới và ghi nhớ màu hiện tại, vì vậy một ảnh có thể có nhiều vùng với nhiều màu khác nhau. Có nút hoàn tác vùng cuối và xóa tất cả vùng. Màu tô có thể được chọn bằng bảng màu, nhập mã HEX như `#FFFFFF`, hoặc dùng **Bút chấm lấy màu** và nhấp trực tiếp lên ảnh. Các vùng được lưu theo tỷ lệ nên có thể áp dụng cho nhiều ảnh có kích thước khác nhau.
 
 Chế độ **Theo dòng chữ (Tesseract)** tự tìm dòng chứa cụm chữ đã nhập, mặc định là `Đáp án tham khảo`, rồi tô toàn bộ dòng kể cả ký tự đáp án A/B/C/... bằng màu đã chọn. Khoảng đệm quanh dòng có thể tùy chỉnh theo pixel. Nút **Xem vùng tìm được** hiển thị kết quả OCR trên ảnh preview trước khi áp dụng hàng loạt.
+
+### Làm sạch watermark xám nhạt
+
+Trong tab **Làm sạch watermark**, chọn thư mục nguồn rồi bấm **Nạp ảnh xem trước**. Ảnh gốc và kết quả được hiển thị cạnh nhau. Có hai preset: **Watermark nhạt** (`205–255`, độ lệch `3`) cho watermark nền sáng và **Logo xám đậm** (`180–240`, độ lệch `8`) cho logo xám như ảnh JIT401. Có thể tinh chỉnh độ sáng tối thiểu, tối đa và độ lệch màu. Bộ lọc ưu tiên bảo vệ vùng sát nét chữ tối để giữ khử răng cưa, đồng thời bảo vệ các đường ngang/dọc dài để không xóa khung hoặc đường kẻ bảng. JPEG được xuất ở chất lượng 100 và không giảm mẫu màu để hạn chế làm mềm chữ. Khi logo nằm trực tiếp trên chữ, một phần logo có thể được giữ lại để tránh phá hỏng nội dung. Kết quả luôn được ghi sang thư mục khác để bảo vệ ảnh gốc và giữ nguyên kích thước ảnh.
+
+### Đóng watermark bằng logo
+
+Trong tab **Đóng watermark**, chọn thư mục ảnh và file logo PNG/WebP/JPG. Logo chỉ được dùng làm watermark lớn ở giữa; các watermark nhỏ là nội dung chữ có thể nhập tùy ý và được lặp nghiêng trên toàn ảnh. Có thể chọn **Chỉ logo giữa**, **Chỉ chữ lặp** hoặc **Logo giữa + chữ lặp**, sau đó chỉnh độ mờ, màu, kích thước logo giữa, cỡ chữ, góc xoay và khoảng cách. Khi dùng kết hợp, phần mềm tự chừa vùng trống quanh logo giữa để chữ lặp không đè lên logo. Nút **Mẫu giống GEM** khôi phục nhanh cấu hình logo giữa kết hợp chữ nghiêng lặp. Logo PNG có nền trong suốt được giữ nguyên alpha; kết quả được xuất sang thư mục mới.
 
 ### Cắt ảnh dài
 

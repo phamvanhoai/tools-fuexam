@@ -10,6 +10,8 @@ from PIL import Image, ImageColor, ImageDraw, ImageTk
 
 from fuexam_core import (
     RenameItem,
+    apply_logo_watermark,
+    clean_light_gray_watermarks,
     detect_question_with_ollama,
     detect_question_with_tesseract,
     execute_safe_rename,
@@ -40,16 +42,22 @@ class FUExamApp(tk.Tk):
         notebook.pack(fill="both", expand=True, padx=10, pady=10)
         self.rename_tab = ttk.Frame(notebook, padding=10)
         self.white_tab = ttk.Frame(notebook, padding=10)
+        self.watermark_tab = ttk.Frame(notebook, padding=10)
+        self.stamp_tab = ttk.Frame(notebook, padding=10)
         self.shift_tab = ttk.Frame(notebook, padding=10)
         self.prefix_tab = ttk.Frame(notebook, padding=10)
         self.crop_tab = ttk.Frame(notebook, padding=10)
         notebook.add(self.rename_tab, text="AI đổi tên theo số câu")
         notebook.add(self.white_tab, text="Tô màu vùng ảnh")
+        notebook.add(self.watermark_tab, text="Làm sạch watermark")
+        notebook.add(self.stamp_tab, text="Đóng watermark")
         notebook.add(self.shift_tab, text="Dịch số thứ tự")
         notebook.add(self.prefix_tab, text="Đổi prefix tên file")
         notebook.add(self.crop_tab, text="Cắt ảnh dài")
         self._build_rename_tab()
         self._build_white_tab()
+        self._build_watermark_tab()
+        self._build_stamp_tab()
         self._build_shift_tab()
         self._build_prefix_tab()
         self._build_crop_tab()
@@ -729,6 +737,410 @@ class FUExamApp(tk.Tk):
             messagebox.showinfo("Hoàn tất", detail)
         else:
             messagebox.showinfo("Hoàn tất", f"Đã tô {len(self.paint_regions)} vùng trên {len(files)} ảnh vào:\n{output}")
+
+    def _build_watermark_tab(self) -> None:
+        tab = self.watermark_tab
+        tab.columnconfigure(1, weight=1)
+        tab.rowconfigure(5, weight=1)
+        self.watermark_input = tk.StringVar()
+        self.watermark_output = tk.StringVar()
+        self.watermark_recursive = tk.BooleanVar(value=False)
+        self.watermark_brightness = tk.IntVar(value=205)
+        self.watermark_ceiling = tk.IntVar(value=255)
+        self.watermark_tolerance = tk.IntVar(value=3)
+        self.watermark_preview_source: Image.Image | None = None
+        self.watermark_preview_cleaned: Image.Image | None = None
+        self.watermark_preview_path: Path | None = None
+        self.watermark_photos: list[ImageTk.PhotoImage] = []
+
+        ttk.Label(tab, text="Thư mục nguồn:").grid(row=0, column=0, sticky="w", pady=5)
+        self._folder_picker(tab, self.watermark_input, 0)
+        ttk.Label(tab, text="Thư mục kết quả:").grid(row=1, column=0, sticky="w", pady=5)
+        self._folder_picker(tab, self.watermark_output, 1)
+
+        settings = ttk.LabelFrame(tab, text="Mức lọc watermark xám nhạt", padding=8)
+        settings.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(6, 4))
+        settings.columnconfigure(1, weight=1)
+        settings.columnconfigure(4, weight=1)
+        ttk.Label(settings, text="Độ sáng tối thiểu:").grid(row=0, column=0, sticky="w")
+        brightness_scale = ttk.Scale(
+            settings, from_=160, to=245, variable=self.watermark_brightness,
+            command=lambda _value: self.refresh_watermark_preview(),
+        )
+        brightness_scale.grid(row=0, column=1, sticky="ew", padx=(6, 4))
+        ttk.Label(settings, textvariable=self.watermark_brightness, width=4).grid(row=0, column=2, sticky="w")
+        ttk.Label(settings, text="Độ sáng tối đa:").grid(row=0, column=3, sticky="w", padx=(18, 0))
+        ceiling_scale = ttk.Scale(
+            settings, from_=160, to=255, variable=self.watermark_ceiling,
+            command=lambda _value: self.refresh_watermark_preview(),
+        )
+        ceiling_scale.grid(row=0, column=4, sticky="ew", padx=(6, 4))
+        ttk.Label(settings, textvariable=self.watermark_ceiling, width=4).grid(row=0, column=5, sticky="w")
+        ttk.Label(settings, text="Độ lệch màu tối đa:").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        tolerance_scale = ttk.Scale(
+            settings, from_=0, to=20, variable=self.watermark_tolerance,
+            command=lambda _value: self.refresh_watermark_preview(),
+        )
+        tolerance_scale.grid(row=1, column=1, sticky="ew", padx=(6, 4), pady=(7, 0))
+        ttk.Label(settings, textvariable=self.watermark_tolerance, width=4).grid(row=1, column=2, sticky="w", pady=(7, 0))
+
+        ttk.Label(
+            tab,
+            text=(
+                "Chỉ các pixel sáng và gần màu xám mới chuyển thành trắng. "
+                "Tăng độ sáng để giữ nhiều chi tiết hơn; tăng độ lệch màu để xóa mạnh hơn."
+            ),
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(2, 6))
+
+        actions = ttk.Frame(tab)
+        actions.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 7))
+        ttk.Button(actions, text="Nạp ảnh xem trước", command=self.load_watermark_preview).pack(side="left")
+        ttk.Button(actions, text="Watermark nhạt", command=self.reset_watermark_settings).pack(side="left", padx=6)
+        ttk.Button(actions, text="Logo xám đậm", command=self.use_dark_watermark_settings).pack(side="left")
+        ttk.Checkbutton(
+            actions, text="Bao gồm thư mục con", variable=self.watermark_recursive,
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            actions, text="Làm sạch tất cả ảnh", command=self.run_watermark_cleanup,
+        ).pack(side="right")
+
+        previews = ttk.Frame(tab)
+        previews.grid(row=5, column=0, columnspan=3, sticky="nsew")
+        previews.columnconfigure(0, weight=1)
+        previews.columnconfigure(1, weight=1)
+        previews.rowconfigure(1, weight=1)
+        ttk.Label(previews, text="Ảnh gốc", anchor="center").grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        ttk.Label(previews, text="Kết quả xem trước", anchor="center").grid(row=0, column=1, sticky="ew", pady=(0, 4))
+        self.watermark_original_canvas = tk.Canvas(
+            previews, background="#252525", highlightthickness=1, highlightbackground="#666",
+        )
+        self.watermark_cleaned_canvas = tk.Canvas(
+            previews, background="#252525", highlightthickness=1, highlightbackground="#666",
+        )
+        self.watermark_original_canvas.grid(row=1, column=0, sticky="nsew", padx=(0, 4))
+        self.watermark_cleaned_canvas.grid(row=1, column=1, sticky="nsew", padx=(4, 0))
+        self.watermark_original_canvas.bind("<Configure>", lambda _event: self.draw_watermark_preview())
+        self.watermark_cleaned_canvas.bind("<Configure>", lambda _event: self.draw_watermark_preview())
+
+    def reset_watermark_settings(self) -> None:
+        self.watermark_brightness.set(205)
+        self.watermark_ceiling.set(255)
+        self.watermark_tolerance.set(3)
+        self.refresh_watermark_preview()
+
+    def use_dark_watermark_settings(self) -> None:
+        self.watermark_brightness.set(180)
+        self.watermark_ceiling.set(240)
+        self.watermark_tolerance.set(8)
+        self.refresh_watermark_preview()
+
+    def load_watermark_preview(self) -> None:
+        source = Path(self.watermark_input.get())
+        if not source.is_dir():
+            messagebox.showerror("Lỗi", "Hãy chọn thư mục nguồn hợp lệ.")
+            return
+        files = list_images(source, self.watermark_recursive.get())
+        if not files:
+            messagebox.showerror("Lỗi", "Không tìm thấy ảnh trong thư mục nguồn.")
+            return
+        self.watermark_preview_path = files[0]
+        with Image.open(files[0]) as image:
+            self.watermark_preview_source = image.convert("RGB")
+        if not self.watermark_output.get():
+            self.watermark_output.set(str(source.with_name(f"{source.name}_clean")))
+        self.refresh_watermark_preview()
+        self.status.set(f"Đang xem trước làm sạch watermark: {files[0].name}")
+
+    def refresh_watermark_preview(self) -> None:
+        if self.watermark_preview_source is None:
+            return
+        self.watermark_preview_cleaned = clean_light_gray_watermarks(
+            self.watermark_preview_source,
+            self.watermark_brightness.get(),
+            self.watermark_tolerance.get(),
+            self.watermark_ceiling.get(),
+        )
+        self.draw_watermark_preview()
+
+    def draw_watermark_preview(self) -> None:
+        if self.watermark_preview_source is None or self.watermark_preview_cleaned is None:
+            return
+        self.watermark_photos = []
+        for canvas, image in (
+            (self.watermark_original_canvas, self.watermark_preview_source),
+            (self.watermark_cleaned_canvas, self.watermark_preview_cleaned),
+        ):
+            width = max(1, canvas.winfo_width())
+            height = max(1, canvas.winfo_height())
+            scale = min(width / image.width, height / image.height)
+            display_width = max(1, round(image.width * scale))
+            display_height = max(1, round(image.height * scale))
+            display = image.resize((display_width, display_height), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(display)
+            self.watermark_photos.append(photo)
+            canvas.delete("all")
+            canvas.create_image(width // 2, height // 2, image=photo, anchor="center")
+
+    def run_watermark_cleanup(self) -> None:
+        source = Path(self.watermark_input.get())
+        if not source.is_dir():
+            messagebox.showerror("Lỗi", "Thư mục nguồn không hợp lệ.")
+            return
+        output = Path(self.watermark_output.get()) if self.watermark_output.get() else source.with_name(f"{source.name}_clean")
+        if output.resolve() == source.resolve():
+            messagebox.showerror("Lỗi", "Hãy chọn thư mục kết quả khác thư mục nguồn để bảo vệ ảnh gốc.")
+            return
+        files = list_images(source, self.watermark_recursive.get())
+        if not files:
+            messagebox.showerror("Lỗi", "Không tìm thấy ảnh để xử lý.")
+            return
+        try:
+            for path in files:
+                target = output / path.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with Image.open(path) as image:
+                    cleaned = clean_light_gray_watermarks(
+                        image,
+                        self.watermark_brightness.get(),
+                        self.watermark_tolerance.get(),
+                        self.watermark_ceiling.get(),
+                    )
+                    suffix = target.suffix.lower()
+                    if suffix in {".jpg", ".jpeg"}:
+                        kwargs = {"quality": 100, "subsampling": 0}
+                    elif suffix == ".webp":
+                        kwargs = {"quality": 100}
+                    else:
+                        kwargs = {}
+                    cleaned.save(target, **kwargs)
+        except Exception as exc:
+            messagebox.showerror("Làm sạch thất bại", str(exc))
+            return
+        messagebox.showinfo("Hoàn tất", f"Đã làm sạch {len(files)} ảnh vào:\n{output}")
+        self.status.set(f"Đã làm sạch watermark trên {len(files)} ảnh.")
+
+    def _build_stamp_tab(self) -> None:
+        tab = self.stamp_tab
+        tab.columnconfigure(1, weight=1)
+        tab.rowconfigure(6, weight=1)
+        default_logo = Path(__file__).resolve().parent.parent / "LOGO FUEXAM.png"
+        self.stamp_input = tk.StringVar()
+        self.stamp_output = tk.StringVar()
+        self.stamp_logo = tk.StringVar(value=str(default_logo) if default_logo.is_file() else "")
+        self.stamp_recursive = tk.BooleanVar(value=False)
+        self.stamp_mode = tk.StringVar(value="Logo giữa + chữ lặp")
+        self.stamp_opacity = tk.IntVar(value=10)
+        self.stamp_center_scale = tk.IntVar(value=34)
+        self.stamp_tile_text = tk.StringVar(value="FUEXAM")
+        self.stamp_text_size = tk.IntVar(value=4)
+        self.stamp_angle = tk.IntVar(value=-25)
+        self.stamp_spacing = tk.IntVar(value=8)
+        self.stamp_color = tk.StringVar(value="#999999")
+        self.stamp_preview_source: Image.Image | None = None
+        self.stamp_preview_result: Image.Image | None = None
+        self.stamp_preview_photo: ImageTk.PhotoImage | None = None
+
+        ttk.Label(tab, text="Thư mục nguồn:").grid(row=0, column=0, sticky="w", pady=4)
+        self._folder_picker(tab, self.stamp_input, 0)
+        ttk.Label(tab, text="Thư mục kết quả:").grid(row=1, column=0, sticky="w", pady=4)
+        self._folder_picker(tab, self.stamp_output, 1)
+        ttk.Label(tab, text="File logo:").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(tab, textvariable=self.stamp_logo).grid(row=2, column=1, sticky="ew", padx=6)
+        ttk.Button(tab, text="Chọn logo", command=self.choose_stamp_logo).grid(row=2, column=2)
+
+        settings = ttk.LabelFrame(tab, text="Kiểu watermark", padding=8)
+        settings.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 4))
+        for column in (1, 4, 7):
+            settings.columnconfigure(column, weight=1)
+        ttk.Label(settings, text="Bố trí:").grid(row=0, column=0, sticky="w")
+        mode_box = ttk.Combobox(
+            settings,
+            textvariable=self.stamp_mode,
+            values=("Logo giữa + chữ lặp", "Chỉ logo giữa", "Chỉ chữ lặp"),
+            state="readonly",
+            width=16,
+        )
+        mode_box.grid(row=0, column=1, sticky="w", padx=(5, 14))
+        mode_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh_stamp_preview())
+        ttk.Label(settings, text="Độ mờ:").grid(row=0, column=2, sticky="w")
+        ttk.Scale(
+            settings, from_=2, to=40, variable=self.stamp_opacity,
+            command=lambda _value: self.refresh_stamp_preview(),
+        ).grid(row=0, column=3, sticky="ew", padx=5)
+        ttk.Label(settings, textvariable=self.stamp_opacity, width=3).grid(row=0, column=4, sticky="w")
+        ttk.Label(settings, text="Màu:").grid(row=0, column=5, sticky="w", padx=(12, 0))
+        ttk.Entry(settings, textvariable=self.stamp_color, width=9).grid(row=0, column=6, sticky="w", padx=5)
+        ttk.Button(settings, text="Chọn màu", command=self.choose_stamp_color).grid(row=0, column=7, sticky="w")
+
+        ttk.Label(settings, text="Logo giữa (%):").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Scale(
+            settings, from_=10, to=70, variable=self.stamp_center_scale,
+            command=lambda _value: self.refresh_stamp_preview(),
+        ).grid(row=1, column=1, sticky="ew", padx=5, pady=(8, 0))
+        ttk.Label(settings, textvariable=self.stamp_center_scale, width=3).grid(row=1, column=2, sticky="w", pady=(8, 0))
+        ttk.Label(settings, text="Cỡ chữ lặp (%):").grid(row=1, column=3, sticky="w", pady=(8, 0))
+        ttk.Scale(
+            settings, from_=2, to=12, variable=self.stamp_text_size,
+            command=lambda _value: self.refresh_stamp_preview(),
+        ).grid(row=1, column=4, sticky="ew", padx=5, pady=(8, 0))
+        ttk.Label(settings, textvariable=self.stamp_text_size, width=3).grid(row=1, column=5, sticky="w", pady=(8, 0))
+        ttk.Label(settings, text="Góc xoay:").grid(row=1, column=6, sticky="w", pady=(8, 0))
+        ttk.Spinbox(
+            settings, from_=-90, to=90, textvariable=self.stamp_angle, width=5,
+            command=self.refresh_stamp_preview,
+        ).grid(row=1, column=7, sticky="w", padx=5, pady=(8, 0))
+
+        ttk.Label(settings, text="Khoảng cách (%):").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Scale(
+            settings, from_=0, to=30, variable=self.stamp_spacing,
+            command=lambda _value: self.refresh_stamp_preview(),
+        ).grid(row=2, column=1, sticky="ew", padx=5, pady=(8, 0))
+        ttk.Label(settings, textvariable=self.stamp_spacing, width=3).grid(row=2, column=2, sticky="w", pady=(8, 0))
+        ttk.Label(settings, text="Chữ lặp:").grid(row=2, column=3, sticky="w", pady=(8, 0))
+        text_entry = ttk.Entry(settings, textvariable=self.stamp_tile_text)
+        text_entry.grid(row=2, column=4, columnspan=4, sticky="ew", padx=5, pady=(8, 0))
+        text_entry.bind("<Return>", lambda _event: self.refresh_stamp_preview())
+        text_entry.bind("<FocusOut>", lambda _event: self.refresh_stamp_preview())
+
+        actions = ttk.Frame(tab)
+        actions.grid(row=4, column=0, columnspan=3, sticky="ew", pady=5)
+        ttk.Button(actions, text="Nạp ảnh xem trước", command=self.load_stamp_preview).pack(side="left")
+        ttk.Button(actions, text="Mẫu giống GEM", command=self.reset_stamp_settings).pack(side="left", padx=6)
+        ttk.Checkbutton(actions, text="Bao gồm thư mục con", variable=self.stamp_recursive).pack(side="left", padx=8)
+        ttk.Button(actions, text="Đóng watermark tất cả ảnh", command=self.run_stamp_watermark).pack(side="right")
+        ttk.Label(
+            tab,
+            text="Logo chỉ dùng ở giữa; các watermark nhỏ là chữ bạn nhập và được lặp nghiêng trên ảnh.",
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(0, 5))
+        self.stamp_canvas = tk.Canvas(tab, background="#252525", highlightthickness=1, highlightbackground="#666")
+        self.stamp_canvas.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        self.stamp_canvas.bind("<Configure>", lambda _event: self.draw_stamp_preview())
+
+    def choose_stamp_logo(self) -> None:
+        selected = filedialog.askopenfilename(
+            initialdir=str(Path(self.stamp_logo.get()).parent) if self.stamp_logo.get() else None,
+            title="Chọn logo watermark",
+            filetypes=[("Ảnh", "*.png *.webp *.jpg *.jpeg"), ("Tất cả file", "*.*")],
+        )
+        if selected:
+            self.stamp_logo.set(selected)
+            self.refresh_stamp_preview()
+
+    def choose_stamp_color(self) -> None:
+        selected = colorchooser.askcolor(color=self.stamp_color.get(), title="Chọn màu watermark")
+        if selected[1]:
+            self.stamp_color.set(selected[1].upper())
+            self.refresh_stamp_preview()
+
+    def reset_stamp_settings(self) -> None:
+        self.stamp_mode.set("Logo giữa + chữ lặp")
+        self.stamp_opacity.set(10)
+        self.stamp_center_scale.set(34)
+        self.stamp_tile_text.set("FUEXAM")
+        self.stamp_text_size.set(4)
+        self.stamp_angle.set(-25)
+        self.stamp_spacing.set(8)
+        self.stamp_color.set("#999999")
+        self.refresh_stamp_preview()
+
+    def _stamp_mode_value(self) -> str:
+        return {
+            "Chỉ logo giữa": "center",
+            "Chỉ chữ lặp": "tile",
+            "Logo giữa + chữ lặp": "center_and_tile",
+        }.get(self.stamp_mode.get(), "center_and_tile")
+
+    def _make_stamp_result(self, source: Image.Image) -> Image.Image:
+        logo_path = Path(self.stamp_logo.get())
+        if not logo_path.is_file():
+            raise ValueError("File logo không hợp lệ.")
+        try:
+            color = ImageColor.getrgb(self.stamp_color.get().strip())
+        except ValueError as exc:
+            raise ValueError("Màu watermark không hợp lệ. Hãy dùng mã như #999999.") from exc
+        with Image.open(logo_path) as logo:
+            return apply_logo_watermark(
+                source,
+                logo,
+                mode=self._stamp_mode_value(),
+                opacity_percent=self.stamp_opacity.get(),
+                center_scale_percent=self.stamp_center_scale.get(),
+                tile_text=self.stamp_tile_text.get(),
+                tile_text_size_percent=self.stamp_text_size.get(),
+                tile_angle=self.stamp_angle.get(),
+                spacing_percent=self.stamp_spacing.get(),
+                color=color,
+            )
+
+    def load_stamp_preview(self) -> None:
+        source = Path(self.stamp_input.get())
+        if not source.is_dir():
+            messagebox.showerror("Lỗi", "Hãy chọn thư mục nguồn hợp lệ.")
+            return
+        logo_path = Path(self.stamp_logo.get()).resolve() if self.stamp_logo.get() else None
+        files = [path for path in list_images(source, self.stamp_recursive.get()) if not logo_path or path.resolve() != logo_path]
+        if not files:
+            messagebox.showerror("Lỗi", "Không tìm thấy ảnh để xem trước.")
+            return
+        with Image.open(files[0]) as image:
+            self.stamp_preview_source = image.convert("RGB")
+        if not self.stamp_output.get():
+            self.stamp_output.set(str(source.with_name(f"{source.name}_watermarked")))
+        self.refresh_stamp_preview()
+        self.status.set(f"Đang xem trước watermark trên: {files[0].name}")
+
+    def refresh_stamp_preview(self) -> None:
+        if self.stamp_preview_source is None:
+            return
+        try:
+            self.stamp_preview_result = self._make_stamp_result(self.stamp_preview_source)
+        except Exception as exc:
+            self.status.set(f"Không thể tạo preview watermark: {exc}")
+            return
+        self.draw_stamp_preview()
+
+    def draw_stamp_preview(self) -> None:
+        if self.stamp_preview_result is None:
+            return
+        width = max(1, self.stamp_canvas.winfo_width())
+        height = max(1, self.stamp_canvas.winfo_height())
+        image = self.stamp_preview_result
+        scale = min(width / image.width, height / image.height)
+        display = image.resize(
+            (max(1, round(image.width * scale)), max(1, round(image.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+        self.stamp_preview_photo = ImageTk.PhotoImage(display)
+        self.stamp_canvas.delete("all")
+        self.stamp_canvas.create_image(width // 2, height // 2, image=self.stamp_preview_photo, anchor="center")
+
+    def run_stamp_watermark(self) -> None:
+        source = Path(self.stamp_input.get())
+        if not source.is_dir():
+            messagebox.showerror("Lỗi", "Thư mục nguồn không hợp lệ.")
+            return
+        output = Path(self.stamp_output.get()) if self.stamp_output.get() else source.with_name(f"{source.name}_watermarked")
+        if output.resolve() == source.resolve():
+            messagebox.showerror("Lỗi", "Hãy chọn thư mục kết quả khác thư mục nguồn.")
+            return
+        logo_path = Path(self.stamp_logo.get()).resolve() if self.stamp_logo.get() else None
+        files = [path for path in list_images(source, self.stamp_recursive.get()) if not logo_path or path.resolve() != logo_path]
+        if not files:
+            messagebox.showerror("Lỗi", "Không tìm thấy ảnh để xử lý.")
+            return
+        try:
+            for path in files:
+                target = output / path.relative_to(source)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with Image.open(path) as image:
+                    result = self._make_stamp_result(image.convert("RGB"))
+                    kwargs = {"quality": 95} if target.suffix.lower() in {".jpg", ".jpeg", ".webp"} else {}
+                    result.save(target, **kwargs)
+        except Exception as exc:
+            messagebox.showerror("Đóng watermark thất bại", str(exc))
+            return
+        messagebox.showinfo("Hoàn tất", f"Đã đóng watermark lên {len(files)} ảnh vào:\n{output}")
+        self.status.set(f"Đã đóng watermark lên {len(files)} ảnh.")
 
     def _build_shift_tab(self) -> None:
         tab = self.shift_tab
