@@ -829,8 +829,8 @@ class FUExamApp(tk.Tk):
         self.refresh_watermark_preview()
 
     def use_dark_watermark_settings(self) -> None:
-        self.watermark_brightness.set(180)
-        self.watermark_ceiling.set(240)
+        self.watermark_brightness.set(160)
+        self.watermark_ceiling.set(255)
         self.watermark_tolerance.set(8)
         self.refresh_watermark_preview()
 
@@ -930,7 +930,7 @@ class FUExamApp(tk.Tk):
         self.stamp_recursive = tk.BooleanVar(value=False)
         self.stamp_mode = tk.StringVar(value="Logo giữa + chữ lặp")
         self.stamp_opacity = tk.IntVar(value=10)
-        self.stamp_center_scale = tk.IntVar(value=34)
+        self.stamp_center_scale = tk.IntVar(value=20)
         self.stamp_tile_text = tk.StringVar(value="FUEXAM")
         self.stamp_text_size = tk.IntVar(value=4)
         self.stamp_angle = tk.IntVar(value=-25)
@@ -1035,7 +1035,7 @@ class FUExamApp(tk.Tk):
     def reset_stamp_settings(self) -> None:
         self.stamp_mode.set("Logo giữa + chữ lặp")
         self.stamp_opacity.set(10)
-        self.stamp_center_scale.set(34)
+        self.stamp_center_scale.set(20)
         self.stamp_tile_text.set("FUEXAM")
         self.stamp_text_size.set(4)
         self.stamp_angle.set(-25)

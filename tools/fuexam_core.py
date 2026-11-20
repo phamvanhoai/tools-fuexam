@@ -48,7 +48,10 @@ def clean_light_gray_watermarks(
     darkest = ImageChops.darker(red, ImageChops.darker(green, blue))
     lightest = ImageChops.lighter(red, ImageChops.lighter(green, blue))
     color_delta = ImageChops.subtract(lightest, darkest)
-    bright_mask = darkest.point(lambda value: 255 if lower <= value <= upper else 0)
+    # Pure white is already the desired background. Excluding it prevents the
+    # long-line detector from treating the entire canvas as protected content.
+    effective_upper = min(254, upper)
+    bright_mask = darkest.point(lambda value: 255 if lower <= value <= effective_upper else 0)
     neutral_mask = color_delta.point(lambda value: 255 if value <= tolerance else 0)
     mask = ImageChops.multiply(bright_mask, neutral_mask)
     if preserve_text_edges:
@@ -59,17 +62,33 @@ def clean_light_gray_watermarks(
         mask = ImageChops.subtract(mask, protected_text_edges)
     if preserve_long_lines and source.width >= 20 and source.height >= 20:
         # Borders and table rules often share the exact same gray as a watermark.
-        # Protect candidate pixels that form long horizontal/vertical structures.
-        row_coverage = mask.resize((1, source.height), Image.Resampling.BOX)
-        column_coverage = mask.resize((source.width, 1), Image.Resampling.BOX)
+        # Require one long contiguous run; scattered watermark fragments on the
+        # same row/column must not be mistaken for a frame line.
+        values = mask.tobytes()
         protected = Image.new("L", source.size, 0)
         draw = ImageDraw.Draw(protected)
-        minimum_coverage = 64  # roughly 25% of the corresponding image dimension
+        minimum_horizontal = max(20, source.width // 4)
         for y in range(source.height):
-            if row_coverage.getpixel((0, y)) >= minimum_coverage:
+            longest = run = 0
+            row_start = y * source.width
+            for x in range(source.width):
+                if values[row_start + x]:
+                    run += 1
+                    longest = max(longest, run)
+                else:
+                    run = 0
+            if longest >= minimum_horizontal:
                 draw.line((0, y, source.width - 1, y), fill=255, width=1)
+        minimum_vertical = max(20, source.height // 4)
         for x in range(source.width):
-            if column_coverage.getpixel((x, 0)) >= minimum_coverage:
+            longest = run = 0
+            for y in range(source.height):
+                if values[y * source.width + x]:
+                    run += 1
+                    longest = max(longest, run)
+                else:
+                    run = 0
+            if longest >= minimum_vertical:
                 draw.line((x, 0, x, source.height - 1), fill=255, width=1)
         protected = protected.filter(ImageFilter.MaxFilter(7))
         mask = ImageChops.subtract(mask, protected)
@@ -144,7 +163,7 @@ def apply_logo_watermark(
     logo: Image.Image,
     mode: str = "center_and_tile",
     opacity_percent: int = 10,
-    center_scale_percent: int = 34,
+    center_scale_percent: int = 20,
     tile_text: str = "FUEXAM",
     tile_text_size_percent: int = 4,
     tile_angle: float = -25,

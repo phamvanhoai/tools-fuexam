@@ -184,7 +184,7 @@ Chế độ **Theo dòng chữ (Tesseract)** tự tìm dòng chứa cụm chữ 
 
 ### Làm sạch watermark xám nhạt
 
-Trong tab **Làm sạch watermark**, chọn thư mục nguồn rồi bấm **Nạp ảnh xem trước**. Ảnh gốc và kết quả được hiển thị cạnh nhau. Có hai preset: **Watermark nhạt** (`205–255`, độ lệch `3`) cho watermark nền sáng và **Logo xám đậm** (`180–240`, độ lệch `8`) cho logo xám như ảnh JIT401. Có thể tinh chỉnh độ sáng tối thiểu, tối đa và độ lệch màu. Bộ lọc ưu tiên bảo vệ vùng sát nét chữ tối để giữ khử răng cưa, đồng thời bảo vệ các đường ngang/dọc dài để không xóa khung hoặc đường kẻ bảng. JPEG được xuất ở chất lượng 100 và không giảm mẫu màu để hạn chế làm mềm chữ. Khi logo nằm trực tiếp trên chữ, một phần logo có thể được giữ lại để tránh phá hỏng nội dung. Kết quả luôn được ghi sang thư mục khác để bảo vệ ảnh gốc và giữ nguyên kích thước ảnh.
+Trong tab **Làm sạch watermark**, chọn thư mục nguồn rồi bấm **Nạp ảnh xem trước**. Ảnh gốc và kết quả được hiển thị cạnh nhau. Có hai preset: **Watermark nhạt** (`205–255`, độ lệch `3`) cho watermark nền sáng và **Logo xám đậm** (`160–255`, độ lệch `8`) cho logo cùng viền xám như ảnh JIT401/PRN222. Pixel trắng tuyệt đối được loại khỏi mask, còn viền watermark rất sáng đến mức 254 vẫn được làm sạch. Có thể tinh chỉnh độ sáng tối thiểu, tối đa và độ lệch màu. Bộ lọc ưu tiên bảo vệ vùng sát nét chữ tối để giữ khử răng cưa, đồng thời chỉ bảo vệ các đoạn ngang/dọc liên tục đủ dài để không nhận nhầm watermark rải rác thành khung. JPEG được xuất ở chất lượng 100 và không giảm mẫu màu để hạn chế làm mềm chữ. Khi logo nằm trực tiếp trên chữ, một phần logo có thể được giữ lại để tránh phá hỏng nội dung. Kết quả luôn được ghi sang thư mục khác để bảo vệ ảnh gốc và giữ nguyên kích thước ảnh.
 
 ### Đóng watermark bằng logo
 
